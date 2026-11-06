@@ -3,9 +3,13 @@ package com.example.linkshortcuts
 import android.app.Activity
 import android.content.Intent
 import android.net.Uri
+import android.os.Build
 import android.os.Bundle
+import android.os.Environment
 import android.provider.DocumentsContract
+import android.provider.Settings
 import android.widget.Toast
+import java.io.File
 
 /**
  * מסך ללא ממשק. נפתח כשלוחצים על קובץ .link, פותח את היעד ומיד נסגר.
@@ -21,16 +25,26 @@ class ShortcutActivity : Activity() {
             return
         }
 
-        if (!LinkFile.displayName(this, source).endsWith(LinkFile.EXTENSION, ignoreCase = true)) {
-            // קובץ אחר שנפתח בטעות דרך אותה אפשרות. יוצאים בשקט.
+        // סייר קבצים שולח נתיב ישיר (file://). לקריאה כזו נדרשת גישה לכל הקבצים
+        if (source.scheme == "file" && !hasAllFilesAccess()) {
+            Toast.makeText(this, "צריך לאשר גישה לכל הקבצים עבור האפליקציה, ואז לנסות שוב", Toast.LENGTH_LONG).show()
+            startActivity(
+                Intent(Settings.ACTION_MANAGE_APP_ALL_FILES_ACCESS_PERMISSION)
+                    .setData(Uri.parse("package:$packageName"))
+            )
             finish()
             return
         }
 
         try {
-            val text = contentResolver.openInputStream(source)?.bufferedReader(Charsets.UTF_8)?.use { it.readText() }
-                ?: throw IllegalStateException("הקובץ ריק או לא נגיש")
+            val name = LinkFile.displayName(this, source)
+            if (!name.endsWith(LinkFile.EXTENSION, ignoreCase = true)) {
+                // קובץ אחר שנפתח בטעות דרך אותה אפשרות. יוצאים בשקט.
+                finish()
+                return
+            }
 
+            val text = readText(source)
             val (kind, target) = LinkFile.decode(text)
                 ?: throw IllegalArgumentException("פורמט קיצור לא תקין")
 
@@ -40,6 +54,26 @@ class ShortcutActivity : Activity() {
         }
 
         finish()
+    }
+
+    private fun hasAllFilesAccess(): Boolean {
+        return if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+            Environment.isExternalStorageManager()
+        } else {
+            true
+        }
+    }
+
+    private fun readText(source: Uri): String {
+        return if (source.scheme == "file") {
+            val path = source.path ?: throw IllegalArgumentException("נתיב לא תקין")
+            File(path).readText(Charsets.UTF_8)
+        } else {
+            contentResolver.openInputStream(source)
+                ?.bufferedReader(Charsets.UTF_8)
+                ?.use { it.readText() }
+                ?: throw IllegalStateException("הקובץ ריק או לא נגיש")
+        }
     }
 
     private fun openFile(target: Uri) {
